@@ -135,7 +135,14 @@ export default function App() {
   const [showPinModal, setShowPinModal] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
-  const MANAGER_PIN = '1234'; // Default PIN Supervisor/GA
+  const [managerPin, setManagerPin] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('senkom_manager_pin') || '1234';
+    }
+    return '1234';
+  });
+  const [showChangePinModal, setShowChangePinModal] = useState(false);
+  const [pinChangeForm, setPinChangeForm] = useState({ oldPin: '', newPin: '', confirmPin: '' });
 
   // Share & QR Modal State
   const [showShareModal, setShowShareModal] = useState(false);
@@ -273,7 +280,7 @@ export default function App() {
   // Verify PIN submission
   const handlePinSubmit = (e) => {
     e.preventDefault();
-    if (pinInput === MANAGER_PIN) {
+    if (pinInput === managerPin) {
       setIsManagerAuthenticated(true);
       setShowPinModal(false);
       setRole('manager');
@@ -281,6 +288,29 @@ export default function App() {
     } else {
       setPinError('PIN Keamanan Salah! Hubungi Supervisor Fleet.');
     }
+  };
+
+  const handleChangePinSubmit = (e) => {
+    e.preventDefault();
+    if (pinChangeForm.oldPin !== managerPin) {
+      showToast('PIN lama tidak sesuai!', 'error');
+      return;
+    }
+    if (pinChangeForm.newPin.length < 4) {
+      showToast('PIN baru minimal 4 angka!', 'error');
+      return;
+    }
+    if (pinChangeForm.newPin !== pinChangeForm.confirmPin) {
+      showToast('Konfirmasi PIN baru tidak cocok!', 'error');
+      return;
+    }
+    setManagerPin(pinChangeForm.newPin);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('senkom_manager_pin', pinChangeForm.newPin);
+    }
+    setShowChangePinModal(false);
+    setPinChangeForm({ oldPin: '', newPin: '', confirmPin: '' });
+    showToast('PIN Keamanan Manager GA berhasil diperbarui!');
   };
 
   const handleManagerLogout = () => {
@@ -1414,6 +1444,16 @@ export default function App() {
                   <span>Cetak Laporan</span>
                 </button>
                 <button 
+                  onClick={() => {
+                    setPinChangeForm({ oldPin: '', newPin: '', confirmPin: '' });
+                    setShowChangePinModal(true);
+                  }}
+                  className="bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-700 text-xs px-3 py-2 rounded-lg flex items-center space-x-1 font-semibold transition-colors"
+                >
+                  <KeyRound className="w-4 h-4" />
+                  <span>Ganti PIN</span>
+                </button>
+                <button 
                   onClick={handleManagerLogout}
                   className="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs px-3 py-2 rounded-lg flex items-center space-x-1 font-semibold transition-colors"
                 >
@@ -1443,13 +1483,12 @@ export default function App() {
                       <th className="p-3.5">Status STNK</th>
                       <th className="p-3.5">Hasil Status</th>
                       <th className="p-3.5">Temuan / Catatan</th>
-                      <th className="p-3.5">Tanda Tangan</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800">
                     {filteredInspections.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-8 text-center text-slate-500">
+                        <td colSpan={6} className="p-8 text-center text-slate-500">
                           Tidak ada data inspeksi yang sesuai dengan filter pencarian.
                         </td>
                       </tr>
@@ -1498,13 +1537,6 @@ export default function App() {
                               {item.notes}
                             </p>
                           </td>
-                          <td className="p-3.5">
-                            {item.signature && item.signature.startsWith('data:image') && (
-                              <div className="bg-slate-100 p-1 rounded border border-slate-400 w-20">
-                                <img src={item.signature} alt="Sign" className="h-6 object-contain mx-auto" />
-                              </div>
-                            )}
-                          </td>
                         </tr>
                       ))
                     )}
@@ -1549,60 +1581,6 @@ export default function App() {
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-
-            {/* TABLE LOGBOOK PERJALANAN OPERASIONAL DI DASHBOARD MANAGER */}
-            <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden shadow-xl">
-              <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-                <h3 className="text-md font-bold text-indigo-400 flex items-center space-x-2">
-                  <Navigation className="w-5 h-5" />
-                  <span>Monitoring Logbook Perjalanan Operasional</span>
-                </h3>
-                <span className="text-xs text-slate-400 font-mono">Total Perjalanan: {tripLogs.length}</span>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-200">
-                  <thead className="bg-slate-950 text-slate-400 uppercase font-mono border-b border-slate-800">
-                    <tr>
-                      <th className="p-3.5">ID Trip / Tanggal</th>
-                      <th className="p-3.5">Driver</th>
-                      <th className="p-3.5">Unit Kendaraan</th>
-                      <th className="p-3.5">Rute (Asal → Tujuan)</th>
-                      <th className="p-3.5">Keperluan Tugas</th>
-                      <th className="p-3.5">Odometer & Jarak</th>
-                      <th className="p-3.5">BBM (L)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {tripLogs.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="p-8 text-center text-slate-500">
-                          Belum ada data logbook perjalanan yang tercatat.
-                        </td>
-                      </tr>
-                    ) : (
-                      tripLogs.map((log) => (
-                        <tr key={log.id} className="hover:bg-slate-800/50 transition-colors">
-                          <td className="p-3.5 font-mono">
-                            <div className="text-indigo-400 font-bold">{log.id}</div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">{log.date}</div>
-                          </td>
-                          <td className="p-3.5 font-semibold text-white">{log.driverName}</td>
-                          <td className="p-3.5 font-bold text-slate-200">{log.vehicleId}</td>
-                          <td className="p-3.5">{log.origin} → {log.destination}</td>
-                          <td className="p-3.5 text-slate-300">{log.purpose || '-'}</td>
-                          <td className="p-3.5 font-mono">
-                            <div className="text-slate-300">{log.startKm} - {log.endKm} KM</div>
-                            <div className="text-emerald-400 font-bold">Total: {log.totalKm} KM</div>
-                          </td>
-                          <td className="p-3.5 font-mono">{log.fuelAdded ? `${log.fuelAdded} L` : '-'}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
               </div>
             </div>
 
@@ -1744,7 +1722,7 @@ export default function App() {
                     type="password"
                     maxLength={6}
                     autoFocus
-                    placeholder="Masukkan PIN (Default: 1234)"
+                    placeholder="Masukkan PIN Keamanan"
                     value={pinInput}
                     onChange={(e) => {
                       setPinInput(e.target.value);
@@ -1773,6 +1751,82 @@ export default function App() {
                     className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2.5 rounded-xl text-xs shadow-lg shadow-indigo-500/20 transition-all"
                   >
                     Masuk Mode GA
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL GANTI PIN MANAGER GA */}
+        {showChangePinModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 max-w-sm w-full space-y-5 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center space-x-2">
+                  <KeyRound className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-md font-bold text-white">Ubah PIN Manager GA</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowChangePinModal(false)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleChangePinSubmit} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">PIN Lama *</label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    required
+                    placeholder="Masukkan PIN saat ini"
+                    value={pinChangeForm.oldPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, oldPin: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-lg p-2.5 font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">PIN Baru (4 - 6 Angka) *</label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    required
+                    placeholder="Masukkan PIN baru"
+                    value={pinChangeForm.newPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, newPin: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-lg p-2.5 font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-300 font-medium mb-1">Konfirmasi PIN Baru *</label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    required
+                    placeholder="Ulangi PIN baru"
+                    value={pinChangeForm.confirmPin}
+                    onChange={(e) => setPinChangeForm({ ...pinChangeForm, confirmPin: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-700 text-white rounded-lg p-2.5 font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="flex items-center space-x-2 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePinModal(false)}
+                    className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold py-2.5 rounded-xl transition-colors"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-bold py-2.5 rounded-xl shadow-lg transition-all"
+                  >
+                    Simpan PIN Baru
                   </button>
                 </div>
               </form>
