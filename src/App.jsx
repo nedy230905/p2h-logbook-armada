@@ -305,10 +305,20 @@ export default function App() {
 
     const initFirebase = async () => {
       try {
-        if (typeof window !== 'undefined' && window.location.href && !window.location.href.includes('about:srcdoc')) {
-          setCustomAppUrl(window.location.href);
+        if (typeof window !== 'undefined' && window.location.origin && !window.location.origin.includes('about:') && !window.location.origin.includes('null')) {
+          setCustomAppUrl(window.location.origin);
         } else {
-          setCustomAppUrl('https://p2h.company.com');
+          setCustomAppUrl('https://kendaraan-senkom.vercel.app');
+        }
+
+        // Otomatis pilih unit jika dibuka lewat scan QR spesifik unit (?unit=OP-PANTHER-01)
+        if (typeof window !== 'undefined' && window.location.search) {
+          const params = new URLSearchParams(window.location.search);
+          const unitParam = params.get('unit');
+          if (unitParam) {
+            setFormData(prev => ({ ...prev, vehicleId: unitParam }));
+            setTripForm(prev => ({ ...prev, vehicleId: unitParam }));
+          }
         }
 
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -725,8 +735,8 @@ export default function App() {
   });
 
   const displayAppUrl = selectedQrVehicle === 'ALL' 
-    ? (customAppUrl || 'https://p2h.company.com') 
-    : `${customAppUrl || 'https://p2h.company.com'}?unit=${selectedQrVehicle}`;
+    ? (customAppUrl || 'https://kendaraan-senkom.vercel.app') 
+    : `${(customAppUrl || 'https://kendaraan-senkom.vercel.app').replace(/\/$/, '')}?unit=${selectedQrVehicle}`;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-12">
@@ -1813,6 +1823,95 @@ export default function App() {
             >
               Selesai & Tutup Notifikasi
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL SHARE LINK & CETAK QR CODE KENDARAAN */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <QrCode className="w-5 h-5 text-indigo-400" />
+                <h3 className="text-md font-bold text-white">QR Code & Bagikan Aplikasi</h3>
+              </div>
+              <button 
+                onClick={() => setShowShareModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs text-slate-300 font-semibold mb-1.5">Pilih QR Unit Kendaraan untuk Ditempel di Dashboard:</label>
+                <select
+                  value={selectedQrVehicle}
+                  onChange={(e) => setSelectedQrVehicle(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 text-white text-xs rounded-lg p-2.5 font-semibold focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="ALL">QR Umum / Bebas Pilih Unit (Link Utama)</option>
+                  {vehicles.map(v => (
+                    <option key={v.id} value={v.id}>Unit {v.name} ({v.id}) - [{v.plat}]</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* TAMPILAN QR CODE */}
+              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 text-center space-y-3">
+                <div className="bg-white p-4 rounded-xl inline-block border-4 border-indigo-500 shadow-xl">
+                  <img 
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(displayAppUrl)}`} 
+                    alt="P2H Fleet QR Code" 
+                    className="w-40 h-40 mx-auto"
+                  />
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-white">
+                    {selectedQrVehicle === 'ALL' ? 'SCAN P2H KENDARAAN OPERASIONAL' : `P2H UNIT: ${selectedQrVehicle}`}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Tempelkan QR Code ini pada dashboard / kaca depan mobil</p>
+                </div>
+              </div>
+
+              {/* LINK SALIN & CUSTOM URL INPUT */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] text-slate-300 font-semibold">URL Domain Publik Aplikasi Anda:</label>
+                  <span className="text-[10px] text-emerald-400 font-mono">✓ Siap Scan</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={customAppUrl}
+                    onChange={(e) => setCustomAppUrl(e.target.value)}
+                    placeholder="https://kendaraan-senkom.vercel.app"
+                    className="w-full bg-slate-800 border border-slate-700 text-indigo-300 text-xs rounded-lg p-2.5 font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(displayAppUrl)}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2.5 rounded-lg flex items-center space-x-1 shrink-0 transition-all shadow"
+                  >
+                    <Copy className="w-4 h-4" />
+                    <span>Salin</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2.5 rounded-xl flex items-center justify-center space-x-2 border border-slate-700 transition-all"
+                >
+                  <Printer className="w-4 h-4 text-indigo-400" />
+                  <span>Cetak Stiker QR Code Mobil</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
