@@ -62,86 +62,49 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'fleet-p2h-app';
 
-// --- INITIAL DUMMY DATA ---
+// --- INITIAL DUMMY DATA (KOSONG AGAR HANYA MENAMPILKAN DATA ASLI) ---
 const INITIAL_VEHICLES = [
   { 
     id: 'OP-PANTHER-01', 
     name: 'Isuzu Panther', 
     plat: 'B 1023 PHO', 
     status: 'FIT', 
-    lastInspect: '2026-11-11 06:30', 
-    driver: 'Budi Santoso',
+    lastInspect: '-', 
+    driver: '-',
     stnkExpiry: '2027-08-15'
   },
   { 
     id: 'OP-STRADA-02', 
     name: 'Mitsubishi Strada Triton', 
     plat: 'B 8492 FFR', 
-    status: 'WARNING', 
-    lastInspect: '2026-11-11 07:00', 
-    driver: 'Agus Wijaya',
-    stnkExpiry: '2026-11-15'
+    status: 'FIT', 
+    lastInspect: '-', 
+    driver: '-',
+    stnkExpiry: '2027-11-15'
   },
   { 
     id: 'OP-REBORN-03', 
     name: 'Toyota Innova Reborn', 
     plat: 'B 7001 BKK', 
-    status: 'GROUNDED', 
-    lastInspect: '2026-11-10 18:15', 
-    driver: 'Eko Prasetyo',
-    stnkExpiry: '2026-10-30'
+    status: 'FIT', 
+    lastInspect: '-', 
+    driver: '-',
+    stnkExpiry: '2027-10-30'
   },
   { 
     id: 'OP-ZENIX-04', 
     name: 'Toyota Innova Zenix', 
     plat: 'B 3311 BZD', 
     status: 'FIT', 
-    lastInspect: '2026-11-11 05:45', 
-    driver: 'Rahmat Hidayat',
+    lastInspect: '-', 
+    driver: '-',
     stnkExpiry: '2027-11-01'
   }
 ];
 
-const INITIAL_INSPECTIONS = [
-  {
-    id: 'P2H-20261111-001',
-    date: '2026-11-11',
-    time: '06:30',
-    shift: 'Operasional Pagi',
-    driverName: 'Budi Santoso',
-    simType: 'SIM A',
-    simExpiry: '2028-04-10',
-    vehicleId: 'OP-PANTHER-01',
-    stnkExpiry: '2027-08-15',
-    docCompliance: 'PASSED',
-    odometer: 145230,
-    status: 'FIT',
-    criticalStatus: 'PASSED',
-    notes: 'Kondisi kendaraan sangat prima. Surat SIM & STNK lengkap.',
-    items: {
-      rem: 'OK', ban: 'OK', lampu: 'OK', klakson: 'OK', seatbelt: 'OK', kemudi: 'OK', apar: 'OK', p3k: 'OK',
-      oli: 'OK', radiator: 'OK', kabin: 'OK', body: 'OK', wiper: 'OK'
-    },
-    signature: 'SIGNED_OK'
-  }
-];
+const INITIAL_INSPECTIONS = [];
 
-const INITIAL_LOGS = [
-  {
-    id: 'TRIP-881',
-    date: '2026-11-11',
-    driverName: 'Budi Santoso',
-    vehicleId: 'OP-PANTHER-01',
-    startKm: 145230,
-    endKm: 145310,
-    totalKm: 80,
-    origin: 'Posko Pusat',
-    destination: 'Patroli Wilayah Cikarang',
-    purpose: 'Giat Pengamanan Wilayah & Koordinasi',
-    fuelAdded: 35,
-    status: 'COMPLETED'
-  }
-];
+const INITIAL_LOGS = [];
 
 // --- INSPECTION ITEMS DEFINITION ---
 const SAFETY_CRITICAL_ITEMS = [
@@ -192,12 +155,49 @@ export default function App() {
 
   // Submission Receipt Modal State
   const [submissionReceipt, setSubmissionReceipt] = useState(null);
+  const [isSyncingSheets, setIsSyncingSheets] = useState(false);
 
-  // Data State
-  const [vehicles, setVehicles] = useState(INITIAL_VEHICLES);
-  const [inspections, setInspections] = useState(INITIAL_INSPECTIONS);
-  const [tripLogs, setTripLogs] = useState(INITIAL_LOGS);
+  // Data State (Dilengkapi penyimpanan otomatis ke localStorage)
+  const [vehicles, setVehicles] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('senkom_vehicles');
+      if (saved) return JSON.parse(saved);
+    }
+    return INITIAL_VEHICLES;
+  });
+  const [inspections, setInspections] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('senkom_inspections');
+      if (saved) return JSON.parse(saved);
+    }
+    return INITIAL_INSPECTIONS;
+  });
+  const [tripLogs, setTripLogs] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('senkom_triplogs');
+      if (saved) return JSON.parse(saved);
+    }
+    return INITIAL_LOGS;
+  });
   const [syncStatus, setSyncStatus] = useState('connecting');
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('senkom_vehicles', JSON.stringify(vehicles));
+    }
+  }, [vehicles]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('senkom_inspections', JSON.stringify(inspections));
+    }
+  }, [inspections]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('senkom_triplogs', JSON.stringify(tripLogs));
+    }
+  }, [tripLogs]);
 
   // Modal State
   const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
@@ -499,6 +499,42 @@ export default function App() {
       return 'ERROR';
     }
   };
+
+  // Fungsi menarik data terbaru langsung dari Google Spreadsheet (doGet)
+  const fetchFromGoogleSheets = async (silent = false) => {
+    if (!googleScriptUrl || !googleScriptUrl.trim()) {
+      if (!silent) showToast('URL Google Apps Script belum diatur!', 'error');
+      return;
+    }
+    setIsSyncingSheets(true);
+    try {
+      const response = await fetch(`${googleScriptUrl.trim()}?action=getData`);
+      const result = await response.json();
+
+      if (result && Array.isArray(result.inspections)) {
+        setInspections(result.inspections);
+      }
+      if (result && Array.isArray(result.tripLogs)) {
+        setTripLogs(result.tripLogs);
+      }
+      if (!silent) {
+        showToast('Data berhasil disinkronkan dari Google Spreadsheet!');
+      }
+    } catch (err) {
+      if (!silent) {
+        showToast('Gagal memuat dari Google Sheets. Pastikan doGet() aktif di Apps Script.', 'error');
+      }
+    } finally {
+      setIsSyncingSheets(false);
+    }
+  };
+
+  // Otomatis tarik data dari Google Sheets saat Manager membuka Dashboard
+  useEffect(() => {
+    if (role === 'manager' && googleScriptUrl) {
+      fetchFromGoogleSheets(true);
+    }
+  }, [role]);
 
   // Fungsi Uji Koneksi Langsung ke Google Spreadsheet
   const handleTestGoogleDrive = async () => {
@@ -1356,6 +1392,14 @@ export default function App() {
 
               <div className="flex items-center space-x-2">
                 <button 
+                  onClick={() => fetchFromGoogleSheets(false)}
+                  disabled={isSyncingSheets}
+                  className="bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white text-xs px-3 py-2 rounded-lg flex items-center space-x-1 font-semibold shadow-md"
+                >
+                  <RotateCcw className={`w-4 h-4 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingSheets ? 'Menyinkronkan...' : 'Sync Google Sheets'}</span>
+                </button>
+                <button 
                   onClick={() => setShowAddVehicleModal(true)}
                   className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-2 rounded-lg flex items-center space-x-1 font-semibold shadow-md"
                 >
@@ -1508,91 +1552,60 @@ export default function App() {
               </div>
             </div>
 
-          </div>
-        )}
-
-        {/* MODAL BUKTI PENGIRIMAN / NOTIFIKASI STATUS KE GOOGLE DRIVE */}
-        {submissionReceipt && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
-              <div className="text-center space-y-2">
-                <div className="w-14 h-14 bg-emerald-950 border-2 border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-400 shadow-lg shadow-emerald-500/20">
-                  <CheckCircle2 className="w-8 h-8" />
-                </div>
-                <h3 className="text-lg font-black text-white">Laporan Berhasil Dikirim!</h3>
-                <p className="text-xs text-slate-400">Data pemeriksaan telah tercatat di sistem Logbook Kendaraan SENKOM.</p>
+            {/* TABLE LOGBOOK PERJALANAN OPERASIONAL DI DASHBOARD MANAGER */}
+            <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl overflow-hidden shadow-xl">
+              <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+                <h3 className="text-md font-bold text-indigo-400 flex items-center space-x-2">
+                  <Navigation className="w-5 h-5" />
+                  <span>Monitoring Logbook Perjalanan Operasional</span>
+                </h3>
+                <span className="text-xs text-slate-400 font-mono">Total Perjalanan: {tripLogs.length}</span>
               </div>
 
-              <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5 text-xs">
-                <div className="flex justify-between border-b border-slate-800/80 pb-2">
-                  <span className="text-slate-400">No. Referensi:</span>
-                  <span className="font-mono font-bold text-indigo-400">{submissionReceipt.id}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-800/80 pb-2">
-                  <span className="text-slate-400">Jenis Form:</span>
-                  <span className="font-semibold text-white">{submissionReceipt.type}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-800/80 pb-2">
-                  <span className="text-slate-400">Waktu Input:</span>
-                  <span className="font-mono text-slate-300">{submissionReceipt.date}</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-800/80 pb-2">
-                  <span className="text-slate-400">Pengemudi & Unit:</span>
-                  <span className="font-bold text-white">{submissionReceipt.driverName} ({submissionReceipt.vehicleId})</span>
-                </div>
-                <div className="pt-1">
-                  <span className="text-slate-400 block mb-1">Hasil Status:</span>
-                  <div className={`p-2 rounded-lg font-bold text-center ${
-                    submissionReceipt.statusCode === 'GROUNDED'
-                      ? 'bg-rose-950 text-rose-300 border border-rose-700'
-                      : submissionReceipt.statusCode === 'WARNING'
-                      ? 'bg-amber-950 text-amber-300 border border-amber-700'
-                      : 'bg-emerald-950 text-emerald-300 border border-emerald-700'
-                  }`}>
-                    {submissionReceipt.statusLabel}
-                  </div>
-                </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-200">
+                  <thead className="bg-slate-950 text-slate-400 uppercase font-mono border-b border-slate-800">
+                    <tr>
+                      <th className="p-3.5">ID Trip / Tanggal</th>
+                      <th className="p-3.5">Driver</th>
+                      <th className="p-3.5">Unit Kendaraan</th>
+                      <th className="p-3.5">Rute (Asal → Tujuan)</th>
+                      <th className="p-3.5">Keperluan Tugas</th>
+                      <th className="p-3.5">Odometer & Jarak</th>
+                      <th className="p-3.5">BBM (L)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {tripLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-8 text-center text-slate-500">
+                          Belum ada data logbook perjalanan yang tercatat.
+                        </td>
+                      </tr>
+                    ) : (
+                      tripLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-slate-800/50 transition-colors">
+                          <td className="p-3.5 font-mono">
+                            <div className="text-indigo-400 font-bold">{log.id}</div>
+                            <div className="text-[10px] text-slate-400 mt-0.5">{log.date}</div>
+                          </td>
+                          <td className="p-3.5 font-semibold text-white">{log.driverName}</td>
+                          <td className="p-3.5 font-bold text-slate-200">{log.vehicleId}</td>
+                          <td className="p-3.5">{log.origin} → {log.destination}</td>
+                          <td className="p-3.5 text-slate-300">{log.purpose || '-'}</td>
+                          <td className="p-3.5 font-mono">
+                            <div className="text-slate-300">{log.startKm} - {log.endKm} KM</div>
+                            <div className="text-emerald-400 font-bold">Total: {log.totalKm} KM</div>
+                          </td>
+                          <td className="p-3.5 font-mono">{log.fuelAdded ? `${log.fuelAdded} L` : '-'}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
-
-              {/* STATUS SINKRONISASI GOOGLE DRIVE / SHEETS */}
-              <div className={`p-3.5 rounded-xl border text-xs flex items-start space-x-3 ${
-                submissionReceipt.driveStatus === 'SENT'
-                  ? 'bg-emerald-950/60 border-emerald-600/70 text-emerald-200'
-                  : submissionReceipt.driveStatus === 'NOT_CONFIGURED'
-                  ? 'bg-amber-950/60 border-amber-600/70 text-amber-200'
-                  : 'bg-rose-950/60 border-rose-600/70 text-rose-200'
-              }`}>
-                <Cloud className="w-5 h-5 shrink-0 mt-0.5" />
-                <div>
-                  {submissionReceipt.driveStatus === 'SENT' && (
-                    <>
-                      <div className="font-bold text-emerald-300">✅ Terkirim ke Google Drive / Sheets!</div>
-                      <p className="text-[11px] opacity-90 mt-0.5">Rekaman data otomatis tersimpan ke spreadsheet Google Drive Anda.</p>
-                    </>
-                  )}
-                  {submissionReceipt.driveStatus === 'NOT_CONFIGURED' && (
-                    <>
-                      <div className="font-bold text-amber-300">⚠️ Google Drive Belum Dihubungkan</div>
-                      <p className="text-[11px] opacity-90 mt-0.5">Data tersimpan di aplikasi, tetapi belum masuk ke Google Sheets karena URL Apps Script belum dipasang.</p>
-                    </>
-                  )}
-                  {submissionReceipt.driveStatus === 'ERROR' && (
-                    <>
-                      <div className="font-bold text-rose-300">❌ Gagal Mengirim ke Google Drive</div>
-                      <p className="text-[11px] opacity-90 mt-0.5">Periksa koneksi internet Anda atau pastikan izin deployment Apps Script disetel ke "Anyone".</p>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setSubmissionReceipt(null)}
-                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs shadow-lg transition-all"
-              >
-                Selesai & Tutup Notifikasi
-              </button>
             </div>
+
           </div>
         )}
 
