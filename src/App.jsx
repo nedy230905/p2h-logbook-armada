@@ -200,6 +200,7 @@ export default function App() {
 
   // Submission Success Receipt Modal State
   const [submissionReceipt, setSubmissionReceipt] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Data State
   const [vehicles, setVehicles] = useState(INITIAL_VEHICLES);
@@ -416,7 +417,15 @@ export default function App() {
   const stopDrawing = () => {
     if (isDrawing && canvasRef.current) {
       setIsDrawing(false);
-      setSignatureData(canvasRef.current.toDataURL());
+      // Kompresi gambar tanda tangan ke JPEG ringan agar muat di sel Google Sheets
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = 240;
+      tempCanvas.height = 80;
+      const tCtx = tempCanvas.getContext('2d');
+      tCtx.fillStyle = '#ffffff';
+      tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      tCtx.drawImage(canvasRef.current, 0, 0, tempCanvas.width, tempCanvas.height);
+      setSignatureData(tempCanvas.toDataURL('image/jpeg', 0.4));
     }
   };
 
@@ -501,6 +510,7 @@ export default function App() {
       return;
     }
 
+    setIsSubmitting(true);
     const currentResult = calculateP2HStatus();
     const newRecord = {
       id: `P2H-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(100 + Math.random() * 900)}`,
@@ -508,30 +518,36 @@ export default function App() {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       ...formData,
       status: currentResult.status,
-      signature: signatureData
+      signature: signatureData.length > 45000 ? 'SIGNATURE-RECORDED' : signatureData
     };
 
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inspections', newRecord.id), newRecord);
+      // 1. Update state lokal langsung agar responsif & tidak terblokir
+      setInspections(prev => [newRecord, ...prev]);
+      setVehicles(prev => prev.map(v => v.id === formData.vehicleId ? {
+        ...v,
+        status: currentResult.status,
+        driver: formData.driverName,
+        lastInspect: `${newRecord.date} ${newRecord.time}`
+      } : v));
 
-      const targetVeh = vehicles.find(v => v.id === formData.vehicleId);
-      if (targetVeh) {
-        const updatedVeh = {
-          ...targetVeh,
-          status: currentResult.status,
-          driver: formData.driverName,
-          lastInspect: `${newRecord.date} ${newRecord.time}`
-        };
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vehicles', formData.vehicleId), updatedVeh);
+      // 2. Simpan ke Firebase di latar belakang (hanya jika konfigurasi asli tersedia)
+      if (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'demo-key') {
+        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'inspections', newRecord.id), newRecord).catch(console.error);
+        const targetVeh = vehicles.find(v => v.id === formData.vehicleId);
+        if (targetVeh) {
+          setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vehicles', formData.vehicleId), {
+            ...targetVeh,
+            status: currentResult.status,
+            driver: formData.driverName,
+            lastInspect: `${newRecord.date} ${newRecord.time}`
+          }).catch(console.error);
+        }
       }
-
-      showToast(`P2H Berhasil Dikirim! Status Unit: ${currentResult.label}`);
-      clearSignature();
-      setFormData(prev => ({ ...prev, odometer: '', notes: '' }));
 
       let driveSyncStatus = 'NOT_CONFIGURED';
 
-      // Kirim Otomatis ke Google Sheets / Drive
+      // 3. Kirim Otomatis ke Google Sheets / Drive
       if (googleScriptUrl) {
         try {
           await fetch(googleScriptUrl, {
@@ -547,7 +563,11 @@ export default function App() {
         }
       }
 
-      // Tampilkan Pop-up Bukti Pengiriman & Status Google Drive
+      showToast(`P2H Berhasil Dikirim! Status Unit: ${currentResult.label}`);
+      clearSignature();
+      setFormData(prev => ({ ...prev, odometer: '', notes: '' }));
+
+      // 4. Tampilkan Pop-up Bukti Pengiriman & Status Google Drive
       setSubmissionReceipt({
         type: 'P2H Checksheet',
         id: newRecord.id,
@@ -560,7 +580,9 @@ export default function App() {
       });
     } catch (err) {
       console.error("Error saving P2H:", err);
-      showToast('Gagal menyimpan P2H ke Cloud Database', 'error');
+      showToast('Terjadi kesalahan saat memproses formulir P2H', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -574,6 +596,7 @@ export default function App() {
       return;
     }
 
+    setIsSubmitting(true);
     const newTrip = {
       id: `TRIP-${Math.floor(100 + Math.random() * 900)}`,
       date: new Date().toISOString().split('T')[0],
@@ -585,20 +608,17 @@ export default function App() {
     };
 
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trip_logs', newTrip.id), newTrip);
-      showToast('Logbook Perjalanan Berhasil Disimpan!');
-      setTripForm(prev => ({
-        ...prev,
-        startKm: '',
-        endKm: '',
-        origin: '',
-        destination: '',
-        purpose: '',
-        fuelAdded: ''
-      }));
+      // 1. Update state lokal langsung
+      setTripLogs(prev => [newTrip, ...prev]);
+
+      // 2. Simpan ke Firebase di latar belakang (jika bukan demo-key)
+      if (firebaseConfig.apiKey && firebaseConfig.apiKey !== 'demo-key') {
+        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'trip_logs', newTrip.id), newTrip).catch(console.error);
+      }
 
       let driveSyncStatus = 'NOT_CONFIGURED';
 
+      // 3. Kirim ke Google Sheets / Drive
       if (googleScriptUrl) {
         try {
           await fetch(googleScriptUrl, {
@@ -614,7 +634,18 @@ export default function App() {
         }
       }
 
-      // Tampilkan Pop-up Bukti Pengiriman Logbook
+      showToast('Logbook Perjalanan Berhasil Disimpan!');
+      setTripForm(prev => ({
+        ...prev,
+        startKm: '',
+        endKm: '',
+        origin: '',
+        destination: '',
+        purpose: '',
+        fuelAdded: ''
+      }));
+
+      // 4. Tampilkan Pop-up Bukti Pengiriman Logbook
       setSubmissionReceipt({
         type: 'Logbook Perjalanan',
         id: newTrip.id,
@@ -628,6 +659,8 @@ export default function App() {
     } catch (err) {
       console.error("Error saving trip log:", err);
       showToast('Gagal menyimpan log perjalanan', 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1168,10 +1201,11 @@ export default function App() {
 
                 <button
                   type="submit"
-                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-4 px-6 rounded-xl shadow-lg shadow-indigo-500/20 text-md tracking-wider uppercase transition-all flex items-center justify-center space-x-2"
+                  disabled={isSubmitting}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-black py-4 px-6 rounded-xl shadow-lg shadow-indigo-500/20 text-md tracking-wider uppercase transition-all flex items-center justify-center space-x-2"
                 >
                   <ShieldCheck className="w-5 h-5" />
-                  <span>Kirim Checksheet & Log Masuk</span>
+                  <span>{isSubmitting ? 'Mengirim Data ke Google Drive...' : 'Kirim Checksheet & Log Masuk'}</span>
                 </button>
 
               </form>
@@ -1286,10 +1320,11 @@ export default function App() {
 
                   <button
                     type="submit"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center space-x-2"
+                    disabled={isSubmitting}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center space-x-2"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Simpan Log Perjalanan</span>
+                    <span>{isSubmitting ? 'Menyimpan ke Google Drive...' : 'Simpan Log Perjalanan'}</span>
                   </button>
                 </form>
 
