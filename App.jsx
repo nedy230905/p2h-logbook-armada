@@ -64,6 +64,8 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
   ? JSON.parse(__firebase_config) 
   : { apiKey: "demo-key", authDomain: "demo.firebaseapp.com", projectId: "demo-app" };
 
+const DEFAULT_GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby_S3ScI762fjMC6kvXEDTi6UqKplUy4_S9ouZ5bo5CD-dDweO09RdESS4sSusjQe0K/exec";
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -186,9 +188,18 @@ export default function App() {
   const [selectedQrVehicle, setSelectedQrVehicle] = useState('ALL');
   const [customAppUrl, setCustomAppUrl] = useState('');
 
-  // Google Sheets Integration State
-  const [googleScriptUrl, setGoogleScriptUrl] = useState('');
+  // Google Sheets Integration State (Otomatis menggunakan DEFAULT_GOOGLE_SCRIPT_URL)
+  const [googleScriptUrl, setGoogleScriptUrl] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('p2h_google_script_url') || DEFAULT_GOOGLE_SCRIPT_URL;
+    }
+    return DEFAULT_GOOGLE_SCRIPT_URL;
+  });
   const [showDriveModal, setShowDriveModal] = useState(false);
+  const [isTestingDrive, setIsTestingDrive] = useState(false);
+
+  // Submission Success Receipt Modal State
+  const [submissionReceipt, setSubmissionReceipt] = useState(null);
 
   // Data State
   const [vehicles, setVehicles] = useState(INITIAL_VEHICLES);
@@ -508,20 +519,35 @@ export default function App() {
       clearSignature();
       setFormData(prev => ({ ...prev, odometer: '', notes: '' }));
 
-      // Kirim Otomatis ke Google Sheets / Drive jika Webhook URL dikonfigurasi
+      let driveSyncStatus = 'NOT_CONFIGURED';
+
+      // Kirim Otomatis ke Google Sheets / Drive
       if (googleScriptUrl) {
         try {
-          fetch(googleScriptUrl, {
+          await fetch(googleScriptUrl, {
             method: 'POST',
             mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({ type: 'P2H', data: newRecord })
           });
-          showToast('Data P2H juga berhasil dikirim ke Google Drive/Sheets!');
+          driveSyncStatus = 'SENT';
         } catch (gErr) {
           console.error("Error Google Sheets API:", gErr);
+          driveSyncStatus = 'FAILED';
         }
       }
+
+      // Tampilkan Pop-up Bukti Pengiriman & Status Google Drive
+      setSubmissionReceipt({
+        type: 'P2H Checksheet',
+        id: newRecord.id,
+        driver: newRecord.driverName,
+        vehicle: newRecord.vehicleId,
+        time: `${newRecord.date} ${newRecord.time}`,
+        status: currentResult.label,
+        statusColor: currentResult.color,
+        driveSync: driveSyncStatus
+      });
     } catch (err) {
       console.error("Error saving P2H:", err);
       showToast('Gagal menyimpan P2H ke Cloud Database', 'error');
@@ -561,18 +587,34 @@ export default function App() {
         fuelAdded: ''
       }));
 
+      let driveSyncStatus = 'NOT_CONFIGURED';
+
       if (googleScriptUrl) {
         try {
-          fetch(googleScriptUrl, {
+          await fetch(googleScriptUrl, {
             method: 'POST',
             mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify({ type: 'TRIP', data: newTrip })
           });
+          driveSyncStatus = 'SENT';
         } catch (gErr) {
           console.error("Error Google Sheets API Trip:", gErr);
+          driveSyncStatus = 'FAILED';
         }
       }
+
+      // Tampilkan Pop-up Bukti Pengiriman Logbook
+      setSubmissionReceipt({
+        type: 'Logbook Perjalanan',
+        id: newTrip.id,
+        driver: newTrip.driverName,
+        vehicle: newTrip.vehicleId,
+        time: newTrip.date,
+        status: `Jarak Tempuh: ${newTrip.totalKm} KM`,
+        statusColor: 'indigo',
+        driveSync: driveSyncStatus
+      });
     } catch (err) {
       console.error("Error saving trip log:", err);
       showToast('Gagal menyimpan log perjalanan', 'error');
@@ -629,6 +671,45 @@ export default function App() {
     } catch (err) {
       console.error("Failed to copy link:", err);
       showToast('Gagal menyalin link', 'error');
+    }
+  };
+
+  // Fungsi Tes Kirim Data Langsung ke Google Apps Script
+  const handleTestGoogleDrive = async () => {
+    if (!googleScriptUrl) {
+      showToast('URL Google Apps Script masih kosong!', 'error');
+      return;
+    }
+    setIsTestingDrive(true);
+    const dummyTest = {
+      id: `TEST-P2H-${Math.floor(100 + Math.random() * 900)}`,
+      date: new Date().toISOString().split('T')[0],
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      shift: 'Uji Coba Sistem',
+      driverName: 'Tester Sistem (Uji Koneksi)',
+      simType: 'SIM A',
+      simExpiry: '2028-01-01',
+      vehicleId: 'OP-PANTHER-01',
+      stnkExpiry: '2028-01-01',
+      odometer: 100000,
+      status: 'FIT',
+      notes: 'Tes koneksi otomatis dari Aplikasi Web P2H',
+      signature: 'TEST-OK'
+    };
+
+    try {
+      await fetch(googleScriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ type: 'P2H', data: dummyTest })
+      });
+      showToast('Permintaan tes terkirim! Cek tab Data_P2H di Spreadsheet Anda.');
+    } catch (err) {
+      console.error("Test Drive Error:", err);
+      showToast('Gagal menghubungi URL Google Script!', 'error');
+    } finally {
+      setIsTestingDrive(false);
     }
   };
 
@@ -1621,124 +1702,117 @@ export default function App() {
               </div>
 
               <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-400">
-                <div className="font-bold text-slate-200">Langkah Singkat Pengaturan:</div>
+                <div className="font-bold text-slate-200">Checklist Wajib Jika Data Belum Masuk:</div>
                 <ol className="list-decimal pl-4 space-y-1">
-                  <li>Buka Google Drive Anda → Buat **Google Sheets** baru.</li>
-                  <li>Klik menu **Ekstensi → Apps Script**.</li>
-                  <li>Paste kode script pengirim (dikirimkan oleh sistem).</li>
-                  <li>Klik **Terapkan (Deploy) → Sebagai Web App**.</li>
-                  <li>Setel akses ke: *"Siapa Saja (Anyone)"*.</li>
-                  <li>Salin URL Web App dan tempelkan pada kolom di atas!</li>
+                  <li>Di Apps Script, klik <strong>Terapkan (Deploy) → Kelola Penerapan</strong>.</li>
+                  <li>Pastikan bagian <em>"Siapa yang memiliki akses"</em> disetel ke: <strong className="text-amber-400">"Siapa Saja (Anyone)"</strong>.</li>
+                  <li>Jika baru mengubah kode script, pilih <strong>Versi Baru (New Version)</strong> saat Deploy ulang.</li>
+                  <li>Cek bagian bawah Google Sheets untuk tab baru bernama <strong className="text-emerald-400">Data_P2H</strong>.</li>
                 </ol>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  showToast('URL Google Apps Script disimpan!');
-                  setShowDriveModal(false);
-                }}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow-md"
-              >
-                Simpan Konfigurasi Google Drive
-              </button>
+              <div className="flex flex-col space-y-2">
+                <button
+                  type="button"
+                  disabled={isTestingDrive}
+                  onClick={handleTestGoogleDrive}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow-md"
+                >
+                  {isTestingDrive ? 'Mengirim Data Uji Coba...' : '🚀 Tes Kirim Data Uji Coba ke Spreadsheet'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem('p2h_google_script_url', googleScriptUrl);
+                    }
+                    showToast('URL Google Apps Script disimpan!');
+                    setShowDriveModal(false);
+                  }}
+                  className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all shadow-md"
+                >
+                  Simpan Konfigurasi Google Drive
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL SHARE LINK & CETAK QR CODE KENDARAAN */}
-      {showShareModal && (
+      {/* MODAL BUKTI & NOTIFIKASI PENGIRIMAN BERHASIL (RECEIPT POPUP) */}
+      {submissionReceipt && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center space-x-2">
-                <QrCode className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-md font-bold text-white">QR Code & Bagikan Aplikasi</h3>
+          <div className="bg-slate-900 border border-emerald-500/40 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 bg-emerald-950 border-2 border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-400 shadow-lg shadow-emerald-500/20">
+                <CheckCircle2 className="w-8 h-8" />
               </div>
-              <button 
-                onClick={() => setShowShareModal(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <h3 className="text-lg font-black text-white">Laporan Berhasil Dikirim!</h3>
+              <p className="text-xs text-slate-400">Data {submissionReceipt.type} telah tercatat dalam sistem.</p>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs text-slate-300 font-semibold mb-1.5">Pilih QR Unit Kendaraan untuk Ditempel di Dashboard:</label>
-                <select
-                  value={selectedQrVehicle}
-                  onChange={(e) => setSelectedQrVehicle(e.target.value)}
-                  className="w-full bg-slate-800 border border-slate-700 text-white text-xs rounded-lg p-2.5 font-semibold focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="ALL">QR Umum / Bebas Pilih Unit (Link Utama)</option>
-                  {vehicles.map(v => (
-                    <option key={v.id} value={v.id}>Unit {v.name} ({v.id}) - [{v.plat}]</option>
-                  ))}
-                </select>
+            {/* RINGKASAN DATA */}
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5 text-xs">
+              <div className="flex justify-between border-b border-slate-800 pb-2">
+                <span className="text-slate-400">No. Referensi:</span>
+                <span className="font-mono font-bold text-indigo-400">{submissionReceipt.id}</span>
               </div>
-
-              {/* TAMPILAN QR CODE SAMPLES */}
-              <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 text-center space-y-3">
-                <div className="bg-white p-4 rounded-xl inline-block border-4 border-indigo-500 shadow-xl">
-                  <img 
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(displayAppUrl)}`} 
-                    alt="P2H Fleet QR Code" 
-                    className="w-40 h-40 mx-auto"
-                  />
-                </div>
-                <div>
-                  <div className="text-sm font-bold text-white">
-                    {selectedQrVehicle === 'ALL' ? 'SCAN P2H KENDARAAN OPERASIONAL' : `P2H UNIT: ${selectedQrVehicle}`}
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Tempelkan QR Code ini pada dashboard / kaca depan mobil</p>
-                </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Driver:</span>
+                <span className="font-semibold text-white">{submissionReceipt.driver}</span>
               </div>
-
-              {/* LINK SALIN & CUSTOM URL INPUT */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="block text-[11px] text-slate-300 font-semibold">URL Domain Publik Aplikasi Anda:</label>
-                  <span className="text-[10px] text-indigo-400 font-mono">*Wajib Diisi Domain Hosting Publik</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="text"
-                    value={customAppUrl}
-                    onChange={(e) => setCustomAppUrl(e.target.value)}
-                    placeholder="https://p2h.perusahaananda.com"
-                    className="w-full bg-slate-800 border border-slate-700 text-indigo-300 text-xs rounded-lg p-2.5 font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                  <button
-                    onClick={() => copyToClipboard(displayAppUrl)}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2.5 rounded-lg flex items-center space-x-1 shrink-0 transition-all shadow"
-                  >
-                    <Copy className="w-4 h-4" />
-                    <span>Salin</span>
-                  </button>
-                </div>
-                <div className="p-2.5 bg-indigo-950/40 border border-indigo-500/20 rounded-lg text-[10px] text-slate-300 space-y-1">
-                  <div className="font-bold text-indigo-300 flex items-center space-x-1">
-                    <span>💡 Mengapa Perlu Memasukkan URL Host?</span>
-                  </div>
-                  <p>
-                    Saat aplikasi dipublikasikan ke layanan hosting (seperti <strong>Vercel, Netlify, Github Pages, atau Server Kantor</strong>), masukkan URL website tersebut di kolom ini agar <strong>QR Code yang dicetak</strong> bisa langsung dibuka oleh HP driver dari mana saja.
-                  </p>
-                </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Unit Kendaraan:</span>
+                <span className="font-bold text-white">{submissionReceipt.vehicle}</span>
               </div>
-
-              <div className="flex items-center space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2.5 rounded-xl flex items-center justify-center space-x-2 border border-slate-700 transition-all"
-                >
-                  <Printer className="w-4 h-4 text-indigo-400" />
-                  <span>Cetak Stiker QR Code Mobil</span>
-                </button>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Waktu Input:</span>
+                <span className="font-mono text-slate-300">{submissionReceipt.time}</span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-slate-800 items-center">
+                <span className="text-slate-400">Hasil / Status:</span>
+                <span className={`font-bold px-2 py-0.5 rounded text-[11px] ${
+                  submissionReceipt.statusColor === 'rose' ? 'bg-rose-950 text-rose-400 border border-rose-700' :
+                  submissionReceipt.statusColor === 'amber' ? 'bg-amber-950 text-amber-400 border border-amber-700' :
+                  submissionReceipt.statusColor === 'emerald' ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' :
+                  'bg-indigo-950 text-indigo-400 border border-indigo-700'
+                }`}>
+                  {submissionReceipt.status}
+                </span>
               </div>
             </div>
+
+            {/* STATUS SINKRONISASI GOOGLE DRIVE */}
+            <div className={`p-3.5 rounded-xl border text-xs flex items-start space-x-3 ${
+              submissionReceipt.driveSync === 'SENT' 
+                ? 'bg-emerald-950/60 border-emerald-600/60 text-emerald-200' 
+                : submissionReceipt.driveSync === 'FAILED'
+                ? 'bg-rose-950/60 border-rose-600/60 text-rose-200'
+                : 'bg-amber-950/60 border-amber-600/60 text-amber-200'
+            }`}>
+              <Cloud className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold">
+                  {submissionReceipt.driveSync === 'SENT' && 'Terkirim ke Google Drive / Sheets!'}
+                  {submissionReceipt.driveSync === 'FAILED' && 'Gagal Mengirim ke Google Drive'}
+                  {submissionReceipt.driveSync === 'NOT_CONFIGURED' && 'Google Drive Belum Dihubungkan'}
+                </div>
+                <p className="text-[11px] opacity-85 leading-relaxed">
+                  {submissionReceipt.driveSync === 'SENT' && 'Baris data baru telah otomatis ditambahkan ke file Google Sheets Anda.'}
+                  {submissionReceipt.driveSync === 'FAILED' && 'Data tersimpan lokal, namun gagal terhubung ke URL Apps Script.'}
+                  {submissionReceipt.driveSync === 'NOT_CONFIGURED' && 'Data tersimpan di aplikasi, namun URL Google Apps Script belum diisi pada menu "Google Drive" di atas.'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSubmissionReceipt(null)}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl text-xs transition-all shadow-lg"
+            >
+              Selesai & Tutup Notifikasi
+            </button>
           </div>
         </div>
       )}
